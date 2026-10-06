@@ -452,6 +452,8 @@ impl Drop for CameraCapture {
 
 /// Start capture from the exact camera ID, requiring camera permission to have already been
 /// granted by the host. This function never requests permission or chooses a different camera.
+/// AVFoundation startup is synchronous and can block; call this on the device owner thread,
+/// not the UI thread, and keep the returned handle on that same thread.
 pub fn start_camera_capture(
     device_id: &CameraDeviceId,
 ) -> Result<CameraCapture, CameraCaptureError> {

@@ -171,6 +171,7 @@ pub enum AudioError {
     DeviceNotFound,
     UnsupportedDirection(&'static str),
     InvalidConfig(&'static str),
+    InvalidInputBuffer,
     CallbackPanicked,
     CalledFromAudioCallback,
     CleanupFailed {
@@ -199,6 +200,9 @@ impl fmt::Display for AudioError {
                 write!(f, "selected audio device does not support {direction}")
             }
             Self::InvalidConfig(message) => f.write_str(message),
+            Self::InvalidInputBuffer => {
+                f.write_str("audio input buffer has an invalid byte layout")
+            }
             Self::CallbackPanicked => f.write_str("audio callback panicked and was disabled"),
             Self::CalledFromAudioCallback => {
                 f.write_str("opening an audio stream from an audio callback is not supported")
@@ -733,13 +737,18 @@ unsafe extern "C-unwind" fn input_callback(
     }
     let audio_buffer = unsafe { &mut *buffer };
     let byte_size = audio_buffer.mAudioDataByteSize as usize;
+    let data = audio_buffer.mAudioData.as_ptr().cast::<f32>();
+    // The binding supplies a NonNull pointer, but valid byte length and f32
+    // alignment must still hold before constructing a Rust slice.
+    if byte_size > audio_buffer.mAudioDataBytesCapacity as usize
+        || byte_size % size_of::<f32>() != 0
+        || data.addr() % std::mem::align_of::<f32>() != 0
+    {
+        report_input_error(context, AudioError::InvalidInputBuffer);
+        return;
+    }
     if byte_size % size_of::<f32>() == 0 {
-        let samples = unsafe {
-            slice::from_raw_parts(
-                audio_buffer.mAudioData.as_ptr().cast::<f32>(),
-                byte_size / size_of::<f32>(),
-            )
-        };
+        let samples = unsafe { slice::from_raw_parts(data, byte_size / size_of::<f32>()) };
         let mut callback_guard = context
             .sample_callback
             .lock()

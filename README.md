@@ -4,8 +4,8 @@
 explicit input or output streams. It also exposes read-only AVFoundation camera inventory. The
 first stream API uses interleaved `f32` PCM and pins a queue to the selected device UID.
 
-This is an initial backend. It does not provide camera capture, device-change notifications,
-loopback capture, per-device format negotiation, or a cross-platform fallback.
+This is an initial backend. It does not provide device-change notifications, loopback capture,
+per-device audio format negotiation, or a cross-platform fallback.
 
 ## Device probes
 
@@ -16,7 +16,37 @@ device names or UIDs and does not open a capture or playback stream.
 `cameras()` returns AVFoundation metadata for the built-in wide-angle and external cameras it
 currently discovers. Each item includes its persistent ID, display name, device type, and whether
 AVFoundation marks it as the default. Enumeration does not create a capture input or session,
-start capture, or request camera authorization. The API has no camera-frame capture path yet.
+start capture, or request camera authorization.
+
+`start_camera_capture(&CameraDeviceId)` opens one exact persistent ID and returns a pull-based
+capture handle. It requires macOS camera permission to have already been granted; the function
+never requests permission or falls back to another camera. The host still needs an
+`NSCameraUsageDescription` and the camera entitlement when sandboxed.
+
+The capture output is BGRA8. The session selects the highest available standard preset at or
+below 1920x1080, and each delivered pixel buffer is checked against that limit before it is
+copied. Frames own tightly packed pixel data and a monotonic callback-delivery timestamp. The
+handle queues at most two frames and drops the oldest queued frame when a newer one arrives.
+`next_frame(timeout)` is pull-based; `stop()` stops the session, detaches the delegate, and waits
+for the serial callback queue to drain. Dropping the handle performs the same synchronous stop.
+Unsupported authorization states, formats, layouts, or oversized delivered frames fail closed.
+
+```rust,no_run
+use std::time::Duration;
+
+use ps_media_device::{cameras, start_camera_capture};
+
+fn first_frame() -> Result<(), Box<dyn std::error::Error>> {
+    let camera = cameras()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| std::io::Error::other("no camera is available"))?;
+    let mut capture = start_camera_capture(camera.id())?;
+    let _frame = capture.next_frame(Duration::from_secs(2))?;
+    capture.stop();
+    Ok(())
+}
+```
 
 ## API
 
@@ -59,10 +89,8 @@ The host application must provide `NSMicrophoneUsageDescription` in its app bund
 does not request or manage app permissions itself. The first capture attempt can trigger macOS's
 microphone authorization flow.
 
-Camera use will also require the host's `NSCameraUsageDescription` and macOS camera entitlement
-when sandboxed. Permission prompting, frame format negotiation, callback ownership, buffering,
-and safe capture-session shutdown remain future camera work. The current enumeration API does
-not request camera authorization or capture frames.
+Camera frame capture is provided by the separate capture API; device enumeration remains
+read-only and does not request camera authorization or start capture.
 
 ## Implementation and provenance
 
@@ -99,4 +127,8 @@ do not prove microphone capture, audible playback, camera frames, or browser int
 
 The camera enumeration probe also compiled and found six cameras with a default present.
 `cargo run --example camera-probe` reports counts only and never opens a capture session.
-Formatting and clippy with warnings denied passed for all targets on this Mac.
+Frame capture has not yet been built or exercised on hardware; permission, frame delivery,
+explicit device selection, stop/drain behavior, and output format still need macOS integration
+checks.
+Formatting and clippy with warnings denied passed for the prior audio and camera-enumeration
+backend. They have not been rerun for the newly added frame-capture path.

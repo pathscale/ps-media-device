@@ -4,7 +4,7 @@
 //! `AVCaptureDevice` reference or Objective-C lifetime escapes the call. Enumeration never
 //! creates a capture session/input, starts capture, or requests camera authorization. A host
 //! still needs to handle camera permission and provide the required usage description before
-//! it adds actual capture support.
+//! calling the separate camera-capture API. Enumeration itself never prompts for permission.
 
 use std::{error::Error, fmt};
 

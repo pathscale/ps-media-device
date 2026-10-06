@@ -19,6 +19,7 @@ use objc2_audio_toolbox::{
     AudioQueueNewOutput, AudioQueueRef, AudioQueueSetProperty, AudioQueueStart, AudioQueueStop,
     kAudioQueueProperty_CurrentDevice,
 };
+use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use objc2_core_audio::{
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID,
     AudioObjectPropertyAddress, kAudioDevicePropertyDeviceUID, kAudioDevicePropertyStreams,
@@ -32,6 +33,7 @@ use objc2_core_audio_types::{
     kAudioFormatLinearPCM,
 };
 use objc2_core_foundation::{CFRetained, CFString};
+use objc2_foundation::{NSBundle, NSString};
 
 const QUEUE_BUFFER_COUNT: usize = 3;
 const MAX_CHANNELS: u32 = 8;
@@ -163,6 +165,9 @@ pub enum AudioError {
         operation: &'static str,
         status: i32,
     },
+    InputMediaTypeUnavailable,
+    InputPermissionNotAuthorized,
+    MissingMicrophoneUsageDescription,
     DeviceNotFound,
     UnsupportedDirection(&'static str),
     InvalidConfig(&'static str),
@@ -180,6 +185,15 @@ impl fmt::Display for AudioError {
             Self::CoreAudioStatus { operation, status } => {
                 write!(f, "CoreAudio {operation} failed with OSStatus {status}")
             }
+            Self::InputMediaTypeUnavailable => {
+                f.write_str("AVFoundation's audio media type is unavailable")
+            }
+            Self::InputPermissionNotAuthorized => {
+                f.write_str("microphone permission has not already been granted")
+            }
+            Self::MissingMicrophoneUsageDescription => f.write_str(
+                "the host bundle must provide NSMicrophoneUsageDescription before capture",
+            ),
             Self::DeviceNotFound => f.write_str("audio device is no longer available"),
             Self::UnsupportedDirection(direction) => {
                 write!(f, "selected audio device does not support {direction}")
@@ -321,6 +335,27 @@ pub fn default_output_device() -> Result<AudioDevice, AudioError> {
     default_device(kAudioHardwarePropertyDefaultOutputDevice)
 }
 
+/// Check that microphone capture is already authorized and the host bundle has a nonempty
+/// `NSMicrophoneUsageDescription`. This is read-only and never requests permission.
+pub fn preflight_input_permission() -> Result<(), AudioError> {
+    let media_type = unsafe { AVMediaTypeAudio }.ok_or(AudioError::InputMediaTypeUnavailable)?;
+    let authorization = unsafe { AVCaptureDevice::authorizationStatusForMediaType(media_type) };
+    if authorization != AVAuthorizationStatus::Authorized {
+        return Err(AudioError::InputPermissionNotAuthorized);
+    }
+
+    let usage_description_key = NSString::from_str("NSMicrophoneUsageDescription");
+    let has_usage_description = NSBundle::mainBundle()
+        .objectForInfoDictionaryKey(&usage_description_key)
+        .and_then(|value| value.downcast::<NSString>().ok())
+        .is_some_and(|value| !value.to_string().trim().is_empty());
+    if !has_usage_description {
+        return Err(AudioError::MissingMicrophoneUsageDescription);
+    }
+
+    Ok(())
+}
+
 /// Start capturing interleaved `f32` samples from `device`.
 ///
 /// The host application must include `NSMicrophoneUsageDescription` in its app bundle. Audio
@@ -338,6 +373,7 @@ pub fn start_input(
     if !device.has_input {
         return Err(AudioError::UnsupportedDirection("input"));
     }
+    preflight_input_permission()?;
     let buffer_bytes = config.validate()?;
     let mut format = config.asbd();
     let context = Box::into_raw(Box::new(InputContext {

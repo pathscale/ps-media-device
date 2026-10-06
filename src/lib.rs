@@ -15,7 +15,8 @@ mod macos_camera_capture;
 
 pub use macos::{
     AudioDevice, AudioDeviceId, AudioError, AudioInput, AudioOutput, StreamConfig,
-    default_input_device, default_output_device, devices, start_input, start_output,
+    default_input_device, default_output_device, devices, preflight_input_permission, start_input,
+    start_output,
 };
 pub use macos_camera::{CameraDevice, CameraDeviceId, CameraError, cameras, default_camera};
 pub use macos_camera_capture::{

@@ -85,9 +85,10 @@ and playback emits silence. Stream handles are deliberately `!Send` and `!Sync`:
 put one in an `Arc<Mutex<Option<_>>>` captured by its own `Send` callback and destroy the queue
 from inside that callback. Opening another stream from an audio callback is rejected at runtime.
 
-The host application must provide `NSMicrophoneUsageDescription` in its app bundle. This crate
-does not request or manage app permissions itself. The first capture attempt can trigger macOS's
-microphone authorization flow.
+The host application must provide a nonempty `NSMicrophoneUsageDescription` in its app bundle and
+grant microphone permission before capture. `preflight_input_permission()` reports whether both
+conditions hold without opening an input or requesting permission. `start_input()` runs this
+preflight before creating an AudioQueue input, so it will not trigger a permission prompt.
 
 Camera frame capture is provided by the separate capture API; device enumeration remains
 read-only and does not request camera authorization or start capture.
@@ -127,8 +128,8 @@ do not prove microphone capture, audible playback, camera frames, or browser int
 
 The camera enumeration probe also compiled and found six cameras with a default present.
 `cargo run --example camera-probe` reports counts only and never opens a capture session.
-Frame capture has not yet been built or exercised on hardware; permission, frame delivery,
+Frame capture compiled and passed all-target clippy with warnings denied; hardware permission, frame delivery,
 explicit device selection, stop/drain behavior, and output format still need macOS integration
 checks.
-Formatting and clippy with warnings denied passed for the prior audio and camera-enumeration
-backend. They have not been rerun for the newly added frame-capture path.
+Formatting also passed for the frame-capture path. Microphone preflight can be inspected without
+opening a device with `cargo run --example input-permission-probe`.
